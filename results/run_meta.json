@@ -1,0 +1,89 @@
+{
+  "label": "MSCI US REIT (RMS) run 20 Oct 2026",
+  "notes": ["Daily observations used: 5335 (2005-06-02 to 2026-10-15).", "Observations spanning >4 calendar days (holiday gaps or a series missing that day): 2.", "Alignment method: paper. Observations where stock and bond returns span different intervals: 49 (paper fn 9 reports 51 over 1995-2016).", "No values were filled or imputed; dates missing from any series are dropped."],
+  "full_replication": false,
+  "tag_rep": "Replication 02 Jun 2005-30 Mar 2016",
+  "tag_ext": "Extension 31 Mar 2016-15 Oct 2026",
+  "tag_full": "Full 02 Jun 2005-15 Oct 2026",
+  "rep_periods": [
+    [
+      "2000s Bull Market (partial)",
+      "2005-06-02",
+      "2007-02-07"
+    ],
+    [
+      "Crash",
+      "2007-02-08",
+      "2009-03-06"
+    ],
+    [
+      "Surge",
+      "2009-03-09",
+      "2013-05-21"
+    ],
+    [
+      "Taper Tantrum and Beyond",
+      "2013-05-22",
+      "2016-03-30"
+    ]
+  ],
+  "ext_tp_periods": [
+    [
+      "REIT down Mar 2016-Feb 2018 (-6%)",
+      "2016-03-31",
+      "2018-02-08"
+    ],
+    [
+      "REIT up Feb 2018-Feb 2020 (+47%)",
+      "2018-02-09",
+      "2020-02-21"
+    ],
+    [
+      "REIT down Feb 2020-Mar 2020 (-44%)",
+      "2020-02-24",
+      "2020-03-23"
+    ],
+    [
+      "REIT up Mar 2020-Dec 2021 (+122%)",
+      "2020-03-24",
+      "2021-12-30"
+    ],
+    [
+      "REIT down Dec 2021-Oct 2022 (-31%)",
+      "2022-01-03",
+      "2022-10-14"
+    ],
+    [
+      "REIT up Oct 2022-Oct 2026 (+54%)",
+      "2022-10-17",
+      "2026-10-15"
+    ]
+  ],
+  "ext_fed_periods": [
+    [
+      "Pre-COVID",
+      "2016-03-31",
+      "2020-02-19"
+    ],
+    [
+      "COVID & zero rates",
+      "2020-02-20",
+      "2022-03-15"
+    ],
+    [
+      "Hiking cycle",
+      "2022-03-16",
+      "2023-07-26"
+    ],
+    [
+      "Hold at peak",
+      "2023-07-27",
+      "2024-09-17"
+    ],
+    [
+      "Since first cut",
+      "2024-09-18",
+      "2026-10-15"
+    ]
+  ]
+}

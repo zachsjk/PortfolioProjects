@@ -1,0 +1,6 @@
+"series","sheet","column","raw_rows","duplicate_dates","blank_or_nonnumeric","usable","first","last"
+"reit_tr","MSCI US REIT","Last Price",5428,0,0,5428,"2005-06-01","2026-10-19"
+"spx","S&P 500 Historical Data","Price",5380,0,0,5380,"2005-06-01","2026-10-19"
+"y10","DGS10","UST 10Y Yields",5577,0,229,5348,"2005-06-01","2026-10-15"
+"baa","DBAA","DBAA",5577,0,229,5348,"2005-06-01","2026-10-15"
+"COMMON (all required series present)",NA,NA,NA,NA,NA,5336,"2005-06-01","2026-10-15"
