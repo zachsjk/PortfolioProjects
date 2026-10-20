@@ -1,4 +1,4 @@
-# Are US REITs bond proxies? (EC4333 group project)
+# Are US REITs bond proxies?
 
 Replication and extension of Giliberto, M. & Shulman, D. (rev. 17 Aug 2016), *On the Interest Rate
 Sensitivity of REITs: Evidence from Twenty Years of Daily Data*, UCLA Ziman Center working paper.
