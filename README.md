@@ -8,9 +8,8 @@ Sensitivity of REITs: Evidence from Twenty Years of Daily Data*, UCLA Ziman Cent
 US REIT Sensitivity/
 ├── replicate_gs.R            # main script: replication, extension, charts, Excel workbook
 ├── fed_regimes_notebook.Rmd  # sensitivity analysis: Fed policy regimes (run second)
-├── data/4333_DATA.xlsx       # input data (one sheet per series; not in the repo)
-├── results/                  # everything the two R files write
-└── python/                   # older Python version (not needed for the submission)
+├── 4333_DATA.xlsx       # input data (one sheet per series; not in the repo)
+├── REIT_RateSensitivity_Results                 
 ```
 
 ## Data (`data/4333_DATA.xlsx`)
@@ -20,20 +19,8 @@ US REIT Sensitivity/
 | `S&P 500 Historical Data` | S&P 500 price index, daily | Investing.com |
 | `DGS10` | 10Y Treasury constant-maturity yield, % | FRED |
 | `DBAA` | Moody's Baa corporate yield, % | FRED |
-| `DGS2` | 2Y Treasury yield (not used in the paper) | FRED |
 
-**The data file is not in the repo** (licensed Bloomberg/MSCI data; see `.gitignore`). Get `4333_DATA.xlsx` from the group and put it in `data/`.
-
-Sample: 1 Jun 2005 to 15 Oct 2026. The REIT levels match the paper's Exhibit 3 index values exactly
-(e.g. 1,851.94 on 30 Mar 2016). No values are filled or imputed.
-
-## How to run
-1. RStudio: *File → New Project → Existing Directory* → this folder.
-2. Once: `install.packages(c("readxl", "openxlsx", "ggplot2", "sandwich", "rmarkdown"))`
-3. Open `replicate_gs.R` and click **Source**. Paths in the `SETTINGS` block are relative to the project folder.
-4. Open `fed_regimes_notebook.Rmd` and click **Knit** (or **Preview**). It adds the Fed-regime sheets to the workbook.
-
-Terminal alternative: `Rscript replicate_gs.R`, then `Rscript -e 'rmarkdown::render("fed_regimes_notebook.Rmd")'`
+Sample: 1 Jun 2005 to 15 Oct 2026. No values are filled or imputed.
 
 ## Outputs (`results/`)
 - `REIT_RateSensitivity_Results.xlsx`: every results table as a sheet, plus a README sheet and the charts.
