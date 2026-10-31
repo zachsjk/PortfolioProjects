@@ -1,4 +1,4 @@
-# Are US REITs bond proxies?
+# Are US REITs bond proxies? (EC4333 group project)
 
 Replication and extension of Giliberto, M. & Shulman, D. (rev. 17 Aug 2016), *On the Interest Rate
 Sensitivity of REITs: Evidence from Twenty Years of Daily Data*, UCLA Ziman Center working paper.
@@ -6,10 +6,11 @@ Sensitivity of REITs: Evidence from Twenty Years of Daily Data*, UCLA Ziman Cent
 ## Folder layout
 ```
 US REIT Sensitivity/
-├── replicate_gs.R        # main script: analysis + charts + Excel workbook
-├── data/4333_DATA.xlsx   # input data (one sheet per series)
-├── results/              # everything the script writes
-└── python/               # Python version (gives identical tables)
+├── replicate_gs.R            # main script: replication, extension, charts, Excel workbook
+├── fed_regimes_notebook.Rmd  # sensitivity analysis: Fed policy regimes (run second)
+├── data/4333_DATA.xlsx       # input data (one sheet per series; not in the repo)
+├── results/                  # everything the two R files write
+└── python/                   # older Python version (not needed for the submission)
 ```
 
 ## Data (`data/4333_DATA.xlsx`)
@@ -21,21 +22,37 @@ US REIT Sensitivity/
 | `DBAA` | Moody's Baa corporate yield, % | FRED |
 | `DGS2` | 2Y Treasury yield (not used in the paper) | FRED |
 
+**The data file is not in the repo** (licensed Bloomberg/MSCI data; see `.gitignore`). Get `4333_DATA.xlsx` from the group and put it in `data/`.
+
 Sample: 1 Jun 2005 to 15 Oct 2026. The REIT levels match the paper's Exhibit 3 index values exactly
 (e.g. 1,851.94 on 30 Mar 2016). No values are filled or imputed.
 
 ## How to run
 1. RStudio: *File → New Project → Existing Directory* → this folder.
-2. Once: `install.packages(c("readxl", "openxlsx", "ggplot2", "sandwich", "jsonlite"))`
+2. Once: `install.packages(c("readxl", "openxlsx", "ggplot2", "sandwich", "rmarkdown"))`
 3. Open `replicate_gs.R` and click **Source**. Paths in the `SETTINGS` block are relative to the project folder.
+4. Open `fed_regimes_notebook.Rmd` and click **Knit** (or **Preview**). It adds the Fed-regime sheets to the workbook.
 
-Terminal alternative: `Rscript replicate_gs.R`
+Terminal alternative: `Rscript replicate_gs.R`, then `Rscript -e 'rmarkdown::render("fed_regimes_notebook.Rmd")'`
 
 ## Outputs (`results/`)
-- `REIT_RateSensitivity_Results.xlsx`: every table, a README sheet and the charts
-- `Replication_vs_Paper.csv`: our estimates next to the paper's, line by line
-- `chart1_rolling_sensitivity.png`, `chart2_replication_check.png`, `chart3_benchmark_per100bp.png`
-- one CSV per table, plus `daily_dataset.csv` (the exact regression dataset)
+- `REIT_RateSensitivity_Results.xlsx`: every results table as a sheet, plus a README sheet and the charts.
+  | Sheet | Contents | Slides |
+  |---|---|---|
+  | `Data_Audit` | rows per series and the common sample | 4 |
+  | `Replication_vs_Paper` | our estimates next to the paper's, all 60 comparisons | 6, A1 |
+  | `Ex4_DescStats` | Exhibit 4 statistics: replication sub-periods and 2016–26 turning-point sub-periods | descriptive statistics |
+  | `Ex2_Correlations` | Exhibit 2 correlations, replication window | backup |
+  | `Ex5_YieldRegs`, `Ex6_BondRegs` | Exhibits 5 and 6 (yield and bond-return regressions) | regression table, credit spreads |
+  | `Ex7_SubPeriods`, `Wald_Tests` | Exhibit 7 sub-period systems and equality tests | 6, backup |
+  | `Ex8_PostLehman` | Exhibit 8, post-Lehman year | 6, A1 |
+  | `Ext_TurningPoints` | 2016–26 REIT turning points (20% rule) | descriptive statistics |
+  | `Robustness` | HC3 / Newey-West errors, lagged REIT return, aligned intervals, weekly data | regression table, A4 |
+  | `Implications_per100bp` | % return per +1pp for REITs, the S&P 500 and the bond, by period | 7, benchmark, A6 |
+  | `Rolling_250d` | rolling one-year estimates | A5 |
+  | `FedRegime_Episodes`, `FedRegime_Stances`, `FedRegime_Wald` | Fed-regime results (written by the notebook) | Fed slide, A2, A3 |
+- `chart1_rolling_sensitivity.png`, `chart2_replication_check.png`, `chart3_benchmark_per100bp.png`, `chart4_fed_regimes.png`: the charts used in the slides
+- `daily_dataset.csv`: the exact regression dataset (contains licensed REIT returns, so it is git-ignored and not submitted)
 
 ## Method notes
 - Bond returns follow the paper: par bond priced at 100, coupon = previous day's yield, re-priced at

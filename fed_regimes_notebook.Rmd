@@ -1,0 +1,284 @@
+---
+title: "Sensitivity analysis: Fed policy regimes, 2005 to 2026"
+subtitle: "EC4333 group project: are US REITs bond proxies?"
+date: "23 October 2026"
+output:
+  html_notebook:
+    toc: true
+  html_document:
+    toc: true
+---
+
+## What this notebook does
+
+Our main results compare two samples: the paper's period (June 2005 to March 2016) and our
+extension (March 2016 to October 2026). This notebook replaces the other robustness checks as
+our **sensitivity analysis**. It asks whether REIT rate sensitivity depends on what the Fed is
+doing, and whether the same kind of Fed regime gives the same answer in different periods.
+
+We split the full sample into 13 Fed policy episodes, group them into four stances (hiking,
+hold, easing, zero rates) and estimate the two main models in each.
+
+**Before running:** run `replicate_gs.R` first. This notebook reads `results/daily_dataset.csv`,
+the exact regression dataset that script writes. Nothing is filled or imputed. The licensed data
+are not in the GitHub repo, so get `data/4333_DATA.xlsx` from the group.
+
+**Outputs:** the three results tables below are written as sheets (`FedRegime_Episodes`,
+`FedRegime_Stances`, `FedRegime_Wald`) into `results/REIT_RateSensitivity_Results.xlsx`, next to the
+main tables. The chart is saved as `results/chart4_fed_regimes.png`. No separate CSVs are written.
+
+To run it: open the project in RStudio, open this file and click **Preview** or **Knit**.
+
+```{r setup, message=FALSE}
+library(sandwich)
+library(ggplot2)
+library(openxlsx)
+
+d <- read.csv("results/daily_dataset.csv")
+d$date <- as.Date(d$date)
+cat("Days:", nrow(d), "from", format(min(d$date)), "to", format(max(d$date)), "\n")
+
+# Results go into the workbook written by replicate_gs.R; re-running replaces the sheet
+WB <- "results/REIT_RateSensitivity_Results.xlsx"
+stopifnot(file.exists(WB))   # run replicate_gs.R first
+put_sheet <- function(name, df) {
+  wb <- loadWorkbook(WB)
+  if (name %in% names(wb)) removeWorksheet(wb, name)
+  addWorksheet(wb, name)
+  writeData(wb, name, df, headerStyle = createStyle(textDecoration = "bold", fontColour = "#FFFFFF",
+                                                     fgFill = "#2A78D6", wrapText = TRUE, valign = "top"))
+  freezePane(wb, name, firstRow = TRUE)
+  num <- which(sapply(df, is.double))
+  if (length(num)) addStyle(wb, name, createStyle(numFmt = "0.0000"), rows = 2:(nrow(df) + 1),
+                            cols = num, gridExpand = TRUE)
+  saveWorkbook(wb, WB, overwrite = TRUE)
+}
+```
+
+## Step 1: define the Fed regimes
+
+Each episode starts on an FOMC decision date and ends the day before the next episode starts.
+The rules:
+
+- A **hiking** episode runs from the first hike of a cycle to the last hike, inclusive.
+- An **easing** episode runs from the first cut to the last cut, inclusive. Pauses inside a cycle
+  stay in that cycle.
+- A **hold** runs from the day after the last move of a cycle to the day before the next move.
+- A **zero-rate** episode starts on the day the target range first reaches 0 to 0.25%.
+
+The first episode starts at our first data day (the 2004 to 2006 hiking cycle was already
+under way). The 2025 and 2026 decisions were checked against the Federal Reserve's statements.
+The earlier dates are the standard FOMC decision dates. **Check them against FRED `DFEDTARU`
+and `DFEDTAR` before the final slides.**
+
+```{r regimes}
+ep <- data.frame(
+  episode = c("2005-06 hiking (end of cycle)", "2006-07 hold at 5.25%", "2007-08 easing (GFC)",
+              "2008-15 zero rates and QE", "2015-18 gradual hiking", "2019 hold",
+              "2019-20 easing (incl. Mar 2020 emergency cut)", "2020-22 COVID zero rates",
+              "2022-23 hiking", "2023-24 hold at peak", "2024-25 easing", "2026 hold",
+              "Sep 2026 hike"),
+  stance  = c("Hiking", "Hold", "Easing", "Zero rates", "Hiking", "Hold", "Easing",
+              "Zero rates", "Hiking", "Hold", "Easing", "Hold", "Hiking"),
+  start   = as.Date(c("2005-06-02", "2006-06-30", "2007-09-18", "2008-12-16", "2015-12-16",
+                      "2018-12-20", "2019-07-31", "2020-03-16", "2022-03-16", "2023-07-27",
+                      "2024-09-18", "2025-12-11", "2026-09-16")),
+  trigger = c("Data start; last hike 29 Jun 2006", "Day after last hike", "First cut 18 Sep 2007",
+              "Range cut to 0-0.25% on 16 Dec 2008", "Liftoff 16 Dec 2015", "Day after last hike (19 Dec 2018)",
+              "First cut 31 Jul 2019", "Range cut to 0-0.25% on 15 Mar 2020 (first trading day 16 Mar)",
+              "Liftoff 16 Mar 2022", "Day after last hike (26 Jul 2023)", "First cut 18 Sep 2024; last cut 10 Dec 2025",
+              "Day after last cut", "Hike to 3.75-4.00% on 16 Sep 2026"))
+ep$end <- c(ep$start[-1] - 1, max(d$date))
+ep$id  <- sprintf("E%02d", seq_len(nrow(ep)))
+stances <- c("Hiking", "Hold", "Easing", "Zero rates")
+
+i <- findInterval(d$date, ep$start)
+stopifnot(all(i >= 1))                       # every day falls in an episode
+d$episode <- factor(ep$id[i], levels = ep$id)
+d$stance  <- factor(ep$stance[i], levels = stances)
+
+ep$days <- as.vector(table(d$episode))
+knitr::kable(ep[, c("id", "episode", "stance", "start", "end", "days", "trigger")])
+```
+
+The last episode (the September 2026 hike) has very few days. We report it but leave it out of
+the tests (rule: an episode needs at least 60 days).
+
+```{r min-n}
+MIN_N <- 60
+ep$tested <- ep$days >= MIN_N
+ep[!ep$tested, c("id", "episode", "days")]
+```
+
+## Step 2: the two models
+
+**Model 1 (total rate sensitivity):** REIT return on the change in the 10-year yield.
+β × 100 is the % REIT return for a +1pp yield rise.
+
+$$REIT_t = \alpha + \beta \, \Delta Y_t + \varepsilon_t$$
+
+**Model B (bond beta with equity control):** REIT return on the imputed 10-year Treasury return,
+the Baa excess return and the S&P 500 return. b₁ is the bond beta (1 = moves like the bond),
+b₃ is the equity beta.
+
+$$REIT_t = \alpha + b_1 \, Tsy_t + b_2 \, Exc_t + b_3 \, SPX_t + \varepsilon_t$$
+
+Standard errors are Newey-West with 5 lags (no prewhitening, no small-sample adjustment), as in
+`replicate_gs.R`.
+
+```{r models}
+hac <- function(m) NeweyWest(m, lag = 5, prewhite = FALSE, adjust = FALSE)
+z <- qnorm(0.975)
+
+fit_group <- function(sub) {
+  m1 <- lm(reit ~ dy10, sub);             v1 <- hac(m1)
+  mb <- lm(reit ~ tsy + exc + spx, sub);  vb <- hac(mb)
+  b  <- coef(m1)[["dy10"]]; s  <- sqrt(v1["dy10", "dy10"])
+  b1 <- coef(mb)[["tsy"]];  s1 <- sqrt(vb["tsy", "tsy"])
+  data.frame(days = nrow(sub),
+             total_pct = 100 * b, total_lo = 100 * (b - z * s), total_hi = 100 * (b + z * s),
+             r2_yield = summary(m1)$r.squared,
+             bond_beta = b1, bond_lo = b1 - z * s1, bond_hi = b1 + z * s1, t_bond = b1 / s1,
+             equity_beta = coef(mb)[["spx"]], r2_modelB = summary(mb)$r.squared)
+}
+```
+
+## Step 3: results by episode
+
+```{r by-episode}
+res_ep <- do.call(rbind, lapply(split(d, d$episode), fit_group))
+res_ep <- cbind(ep[, c("id", "episode", "stance")], res_ep)
+put_sheet("FedRegime_Episodes", res_ep)
+
+show <- res_ep
+num <- sapply(show, is.numeric); show[num] <- lapply(show[num], round, 2)
+knitr::kable(show[, c("id", "episode", "stance", "days", "total_pct", "total_lo", "total_hi",
+                      "bond_beta", "bond_lo", "bond_hi", "equity_beta", "r2_modelB")])
+```
+
+The chart puts episodes of the same stance side by side, in date order, so you can read across
+periods within a stance. The dashed line on the left panel is the 10-year bond's own
+sensitivity (about −8.6% per +1pp). On the right, a bond beta of 1 means the REIT moved like the
+10-year bond, and 0 means no bond-like movement.
+
+```{r chart, fig.width=10, fig.height=6.2, dpi=160}
+INK <- "#0b0b0b"; INK2 <- "#52514e"; MUTED <- "#898781"; GRID <- "#e1e0d9"; BLUE <- "#2a78d6"
+long <- rbind(
+  data.frame(res_ep[, c("id", "episode", "stance", "days")], panel = "Total rate sensitivity (% per +1pp)",
+             est = res_ep$total_pct, lo = res_ep$total_lo, hi = res_ep$total_hi),
+  data.frame(res_ep[, c("id", "episode", "stance", "days")], panel = "Bond beta b1 (holding S&P 500 fixed)",
+             est = res_ep$bond_beta, lo = res_ep$bond_lo, hi = res_ep$bond_hi))
+long$panel  <- factor(long$panel, levels = unique(long$panel))
+long$stance <- factor(long$stance, levels = stances)
+long$label  <- factor(paste0(long$episode, ifelse(long$days < MIN_N, " *", "")),
+                      levels = rev(paste0(ep$episode, ifelse(ep$days < MIN_N, " *", ""))))
+refs <- data.frame(panel = factor(levels(long$panel)[c(1, 1, 2, 2)], levels = levels(long$panel)),
+                   x = c(0, -8.6, 0, 1), lt = c("solid", "dashed", "solid", "dashed"))
+
+g <- ggplot(long, aes(est, label)) +
+  geom_vline(data = refs, aes(xintercept = x, linetype = lt), colour = MUTED, linewidth = 0.4) +
+  scale_linetype_identity() +
+  geom_errorbar(aes(xmin = lo, xmax = hi), orientation = "y", width = 0, colour = BLUE, linewidth = 0.6) +
+  geom_point(colour = BLUE, size = 2.4) +
+  facet_grid(stance ~ panel, scales = "free", space = "free_y") +
+  labs(x = NULL, y = NULL,
+       title = "REIT rate sensitivity by Fed policy episode, Jun 2005 to Oct 2026",
+       caption = paste0("Dots: estimate. Bars: 95% CI (Newey-West, 5 lags). * Fewer than 60 days, not tested.\n",
+                        "Dashed lines: 10Y bond (-8.6% per +1pp, left) and a bond beta of 1 (right).")) +
+  theme_minimal(base_size = 10) +
+  theme(panel.grid.major.y = element_blank(), panel.grid.minor = element_blank(),
+        panel.grid.major.x = element_line(colour = GRID, linewidth = 0.3),
+        strip.text = element_text(colour = INK, face = "bold"), strip.text.y = element_text(angle = 0, hjust = 0),
+        axis.text = element_text(colour = INK2), plot.title = element_text(colour = INK, face = "bold"),
+        plot.caption = element_text(colour = MUTED, hjust = 0), plot.title.position = "plot")
+ggsave("results/chart4_fed_regimes.png", g, width = 10, height = 6.2, dpi = 160)
+g
+```
+
+## Step 4: results by stance (episodes pooled)
+
+```{r by-stance}
+dt <- d[d$episode %in% ep$id[ep$tested], ]
+res_st <- do.call(rbind, lapply(split(dt, dt$stance), fit_group))
+res_st <- cbind(stance = rownames(res_st), res_st)
+put_sheet("FedRegime_Stances", res_st)
+show <- res_st; num <- sapply(show, is.numeric); show[num] <- lapply(show[num], round, 2)
+knitr::kable(show[, c("stance", "days", "total_pct", "total_lo", "total_hi", "bond_beta",
+                      "bond_lo", "bond_hi", "equity_beta", "r2_modelB")], row.names = FALSE)
+```
+
+## Step 5: are the differences real? (Wald tests)
+
+Each test pools the days in question into one regression in which every coefficient can differ
+by group, then tests whether the coefficient of interest is the same in every group.
+A small p-value means the sensitivity really differs across those groups.
+
+```{r wald}
+wald_equal <- function(dd, group, x, rhs) {
+  dd$g <- droplevels(factor(dd[[group]]))
+  f <- as.formula(paste("reit ~ 0 + g +", paste0("g:", rhs, collapse = " + ")))
+  m <- lm(f, dd); V <- hac(m); b <- coef(m)
+  nm <- paste0("g", levels(dd$g), ":", x)
+  K <- length(nm)
+  R <- matrix(0, K - 1, length(b), dimnames = list(NULL, names(b)))
+  for (k in 2:K) { R[k - 1, nm[1]] <- 1; R[k - 1, nm[k]] <- -1 }
+  rb <- R %*% b
+  W <- as.numeric(t(rb) %*% solve(R %*% V %*% t(R)) %*% rb)
+  data.frame(groups = K, chi2 = W, df = K - 1, p = pchisq(W, K - 1, lower.tail = FALSE))
+}
+
+tests <- list(
+  list("Across the 4 stances",          dt,                       "stance"),
+  list("Across the 12 tested episodes", dt,                       "episode"),
+  list("Hiking episodes, across periods",     dt[dt$stance == "Hiking", ],     "episode"),
+  list("Hold episodes, across periods",       dt[dt$stance == "Hold", ],       "episode"),
+  list("Easing episodes, across periods",     dt[dt$stance == "Easing", ],     "episode"),
+  list("Zero-rate episodes, across periods",  dt[dt$stance == "Zero rates", ], "episode"))
+
+wt <- do.call(rbind, lapply(tests, function(t) {
+  a <- wald_equal(t[[2]], t[[3]], "dy10", "dy10")
+  b <- wald_equal(t[[2]], t[[3]], "tsy", c("tsy", "exc", "spx"))
+  data.frame(test = t[[1]], groups = a$groups,
+             p_total_sensitivity = a$p, p_bond_beta = b$p)
+}))
+put_sheet("FedRegime_Wald", wt)
+show <- wt; show$p_total_sensitivity <- signif(show$p_total_sensitivity, 2); show$p_bond_beta <- signif(show$p_bond_beta, 2)
+knitr::kable(show, row.names = FALSE)
+```
+
+## What the results say (run of 23 Oct 2026)
+
+These numbers come from the tables above. If the data change, re-read them from the tables.
+
+1. **The Fed's stance matters for the total sensitivity.** When the Fed is hiking or holding,
+   REITs fall when yields rise (−3.5% and −4.8% per +1pp). When it is easing or at zero, they rise
+   with yields (+12.8% and +7.4%). The four stances differ strongly (p < 0.001). One reading: in
+   easing and zero-rate periods, yields fall on bad growth news, which also hurts REITs.
+2. **The same stance gives different answers in different periods.** Easing in 2007-08 gave
+   +20.9% per +1pp; easing in 2024-25 gave −4.8%. Hold episodes range from +3.6% (2006-07) to
+   −8.3% (2026). The Wald tests reject equality within the hold and easing stances. The stance
+   alone does not pin down the sensitivity; the period does too.
+3. **Hiking cycles are the exception.** All three tested hiking cycles give a total sensitivity of
+   about −2.5% to −4.2%, and the test does not reject equality (p = 0.70).
+4. **In the 2023-24 and 2026 holds, REITs moved like the 10-year bond.** They fell 8.1% and 8.3%
+   per +1pp, against the bond's 8.1% and 8.0% in the same periods, with bond betas near 1. The
+   2024-25 easing in between was less bond-like (−4.8%). In the 2026 hold the S&P 500 also fell
+   about 8% per +1pp, so that result is not specific to REITs.
+5. **The bond beta (holding the S&P 500 fixed) varies by period, not by stance.** Pooled by
+   stance it does not differ significantly (p = 0.10), but it differs across episodes
+   (p < 0.001). It was low in 2005-07, during COVID and in the 2022-23 hikes, and near 1 in most
+   other post-2015 episodes.
+
+## Notes and limitations
+
+- **Regime dates are a modelling choice.** Moving a boundary by a few weeks changes which days
+  fall in each episode. The 2019-20 easing episode includes the COVID crash weeks of
+  late February and early March 2020, so it is not a clean "insurance cut" period.
+- **Episodes are short.** Several have fewer than 300 days, so their confidence intervals are wide.
+  The September 2026 hike is reported but not tested.
+- **Newey-West across gaps.** When episodes are pooled by stance, the lag window can reach across
+  the gap between two episodes. With 5 lags this affects only a handful of days per boundary.
+- **No causality.** A regime is a label for a period, not a shock. Rates, growth and inflation
+  move together, so the coefficients describe co-movement.
+- **Nothing is filled or imputed.** Every day in the regressions is a day on which all series were
+  observed (see the README and Data_Audit sheets of `results/REIT_RateSensitivity_Results.xlsx`).

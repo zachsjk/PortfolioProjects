@@ -5,7 +5,7 @@
 #
 # HOW TO RUN (RStudio): edit the SETTINGS block, then Source the whole file.
 # From a terminal:  Rscript replicate_gs.R --data=4333_DATA.xlsx --out=results
-#                     --reit_sheet="MSCI US REIT TR" --baa_sheet=DBAA
+#                     --reit_sheet="MSCI US REIT" --baa_sheet=DBAA
 #
 # What it does
 #   1. Loads daily series: MSCI US REIT total-return index (paper's "RMS"), S&P 500 price
@@ -18,20 +18,21 @@
 #      with the paper's published numbers, then extends to the end of the data.
 #   4. Robustness: HC3 and Newey-West SEs, lagged dependent variable (paper fn 11), price vs
 #      total return (fn 6), alternative alignment of return intervals (fn 9), weekly data,
-#      and Fed-policy sub-periods for the extension.
+#      and Fed-policy episodes over the full sample (sensitivity analysis).
 #   5. Investor implications: % return per +100bp in the 10Y yield, by period.
-#   6. Writes CSVs, three PNG charts and one Excel workbook.
+#   6. Writes one Excel workbook (every table is a sheet), three PNG charts, and
+#      daily_dataset.csv (the regression dataset that fed_regimes_notebook.Rmd reads).
 #
 # UNITS (as in the paper): returns are DECIMALS (0.01 = 1%); yield changes are in
 # PERCENTAGE POINTS (0.01 = 1bp).  A coefficient of -0.081 on dYield = -8.1% per +100bp.
 # Intercepts in the sub-period tables are reported x1000, as in the paper.
 #
-# Packages: readxl, openxlsx, ggplot2, sandwich, jsonlite
-#   install.packages(c("readxl", "openxlsx", "ggplot2", "sandwich", "jsonlite"))
+# Packages: readxl, openxlsx, ggplot2, sandwich
+#   install.packages(c("readxl", "openxlsx", "ggplot2", "sandwich"))
 # =====================================================================================
 
 suppressPackageStartupMessages({
-  library(readxl); library(openxlsx); library(ggplot2); library(sandwich); library(jsonlite)
+  library(readxl); library(openxlsx); library(ggplot2); library(sandwich)
 })
 invisible(Sys.setlocale("LC_TIME", "C"))   # English month names in labels
 
@@ -69,13 +70,28 @@ PAPER_SUBPERIODS <- list(  # Exhibit 3
 PAPER_N <- c("Mid 90s REIT Bull Market" = 694, "Late 90s REIT Bear Market" = 547, "2000s Bull Market" = 1781,
              "Crash" = 519, "Surge" = 1051, "Taper Tantrum and Beyond" = 713, "Full Period" = 5305)
 LEHMAN <- as.Date(c("2008-09-15", "2009-09-14"))   # Exhibit 8: 250 obs = 118 Crash + 132 Surge
-# Fed-policy regimes for the extension (liftoff 16 Mar 2022, last hike 26 Jul 2023, first cut 18 Sep 2024)
-FED_REGIMES <- list(
-  list("Pre-COVID", "2016-03-31", "2020-02-19"),
-  list("COVID & zero rates", "2020-02-20", "2022-03-15"),
-  list("Hiking cycle", "2022-03-16", "2023-07-26"),
-  list("Hold at peak", "2023-07-27", "2024-09-17"),
-  list("Since first cut", "2024-09-18", "2100-01-01"))
+# Fed-policy episodes, Jun 2005 to Oct 2026 (sensitivity analysis). Same dates as fed_regimes_notebook.Rmd.
+# Each episode starts on an FOMC decision date and ends the day before the next one starts.
+#   Hiking: first hike to last hike.  Easing: first cut to last cut (pauses inside a cycle stay in it).
+#   Hold: day after a cycle's last move to the day before the next move.  Zero rates: from the day the
+#   target range first reaches 0-0.25%.  The first episode starts at our first data day (hikes since Jun 2004).
+# 2025-26 decisions checked against Fed statements; earlier dates are standard FOMC decision dates
+# (check against FRED DFEDTARU / DFEDTAR).  Episodes with fewer than FED_MIN_OBS days are not estimated.
+FED_REGIMES <- list(  # name, start, end, stance
+  list("Hiking 2005-06 (end of cycle)",   "2005-06-02", "2006-06-29", "Hiking"),
+  list("Hold 2006-07 at 5.25%",           "2006-06-30", "2007-09-17", "Hold"),
+  list("Easing 2007-08 (GFC)",            "2007-09-18", "2008-12-15", "Easing"),
+  list("Zero rates 2008-15 and QE",       "2008-12-16", "2015-12-15", "Zero rates"),
+  list("Hiking 2015-18",                  "2015-12-16", "2018-12-19", "Hiking"),
+  list("Hold 2019",                       "2018-12-20", "2019-07-30", "Hold"),
+  list("Easing 2019-20 (incl. Mar 2020)", "2019-07-31", "2020-03-15", "Easing"),
+  list("Zero rates 2020-22 (COVID)",      "2020-03-16", "2022-03-15", "Zero rates"),
+  list("Hiking 2022-23",                  "2022-03-16", "2023-07-26", "Hiking"),
+  list("Hold 2023-24 at peak",            "2023-07-27", "2024-09-17", "Hold"),
+  list("Easing 2024-25",                  "2024-09-18", "2025-12-10", "Easing"),
+  list("Hold 2026",                       "2025-12-11", "2026-09-15", "Hold"),
+  list("Hiking Sep 2026",                 "2026-09-16", "2100-01-01", "Hiking"))
+FED_MIN_OBS <- 60
 
 # Exhibit 4: (mean %, sd %) and N
 PAPER_EX4 <- list(
@@ -441,17 +457,21 @@ run_analysis <- function(cfg) {
     }
   }
   run_system(rep_periods, "Replication sub-periods")
-  ext_tp_periods <- list(); ext_fed_periods <- list()
+  ext_tp_periods <- list()
   if (nrow(ext) > 250) {
-    lvl <- S$reit_tr[S$reit_tr$date >= min(ext$date), ]
+    lvl <- S$reit_tr[S$reit_tr$date >= min(ext$date) & S$reit_tr$date <= data_end, ]
     piv <- turning_points(lvl, cfg$tp_threshold)
     R$Ext_TurningPoints <- data.frame(date = as.character(piv$date), kind = piv$kind,
                                       index_level = lvl$reit_tr[match(piv$date, lvl$date)])
     ext_tp_periods <- periods_in(d, legs_from_pivots(piv, lvl), min(ext$date), data_end, min_obs = 20)
     run_system(ext_tp_periods, "Extension: REIT turning points")
-    ext_fed_periods <- periods_in(d, FED_REGIMES, min(ext$date), data_end)
-    run_system(ext_fed_periods, "Extension: Fed regimes")
+    # Exhibit 4 for the extension: same statistics, whole extension plus its turning-point sub-periods
+    R$Ex4_DescStats <- rbind(R$Ex4_DescStats, describe(ext, tag_ext),
+                             rbind_fill(lapply(ext_tp_periods, function(p) describe(win(d, p$start, p$end), p$name))))
   }
+  # Fed-policy episodes over the whole sample (the sensitivity analysis)
+  fed_periods <- periods_in(d, FED_REGIMES, data_start, data_end, min_obs = FED_MIN_OBS)
+  run_system(fed_periods, "Fed-policy episodes")
   R$Ex7_SubPeriods <- rbind_fill(ex7)
 
   # ---- Exhibit 8: post-Lehman year ----
@@ -565,8 +585,8 @@ run_analysis <- function(cfg) {
   }
   imp <- list(per100(rep, tag_rep))
   for (p in rep_periods) imp[[length(imp) + 1]] <- per100(win(d, p$start, p$end), p$name)
-  if (nrow(ext)) { imp[[length(imp) + 1]] <- per100(ext, tag_ext)
-    for (p in ext_fed_periods) imp[[length(imp) + 1]] <- per100(win(d, p$start, p$end), p$name) }
+  if (nrow(ext)) imp[[length(imp) + 1]] <- per100(ext, tag_ext)
+  for (p in fed_periods) imp[[length(imp) + 1]] <- per100(win(d, p$start, p$end), p$name)
   imp[[length(imp) + 1]] <- per100(full, tag_full)
   R$Implications_per100bp <- rbind_fill(imp)
 
@@ -579,14 +599,15 @@ run_analysis <- function(cfg) {
   }))
   R$Data_Audit <- audit_df
 
+  # The only CSV written is the regression dataset, which fed_regimes_notebook.Rmd reads.
+  # Every results table goes into the Excel workbook (see make_workbook below).
+  dir.create(cfg$out, showWarnings = FALSE)
   dd <- d; dd$date <- as.character(dd$date)
   write.csv(dd, file.path(cfg$out, "daily_dataset.csv"), row.names = FALSE)
-  for (k in names(R)) write.csv(R[[k]], file.path(cfg$out, paste0(k, ".csv")), row.names = FALSE)
   P <- function(l) lapply(l, function(p) list(p$name, as.character(p$start), as.character(p$end)))
   meta <- list(label = cfg$label, notes = notes, full_replication = full_replication, tag_rep = tag_rep, tag_ext = tag_ext,
-               tag_full = tag_full, rep_periods = P(rep_periods), ext_tp_periods = P(ext_tp_periods), ext_fed_periods = P(ext_fed_periods))
-  write_json(meta, file.path(cfg$out, "run_meta.json"), auto_unbox = TRUE, pretty = TRUE)
-  cat(notes, sep = "\n"); cat("Tables written to", cfg$out, ":", paste(names(R), collapse = ", "), "\n")
+               tag_full = tag_full, rep_periods = P(rep_periods), ext_tp_periods = P(ext_tp_periods), fed_periods = P(fed_periods))
+  cat(notes, sep = "\n"); cat("Tables built:", paste(names(R), collapse = ", "), "\n")
   list(R = R, meta = meta, d = d)
 }
 
@@ -601,10 +622,10 @@ theme_gs <- function() theme_minimal(base_size = 10) + theme(
   plot.caption = element_text(colour = INK2, hjust = 0, size = 7.5), plot.caption.position = "plot",
   legend.position = "top", legend.justification = "left", legend.title = element_blank())
 
-make_charts <- function(out, meta, note) {
+make_charts <- function(out, meta, note, R) {
   files <- c()
   # 1. rolling sensitivities
-  r <- read.csv(file.path(out, "Rolling_250d.csv")); r$date <- as.Date(r$date)
+  r <- R$Rolling_250d; r$date <- as.Date(r$date)
   lab <- c(reit_pct_per_100bp_total = "Total rate sensitivity: REIT return (%) per +100bp in the 10Y yield",
            bond_beta_marginal = "Marginal rate sensitivity: Treasury bond beta holding the S&P 500 fixed (paper's b1)",
            equity_beta = "Equity beta on the S&P 500 (paper's b3)")
@@ -623,12 +644,11 @@ make_charts <- function(out, meta, note) {
   f <- file.path(out, "chart1_rolling_sensitivity.png"); ggsave(f, g, width = 10, height = 8.2, dpi = 180); files <- c(files, f)
 
   # 2. replication check (Exhibit 7C and Exhibit 8)
-  cmp <- read.csv(file.path(out, "Replication_vs_Paper.csv"))
+  cmp <- R$Replication_vs_Paper
   cmp <- cmp[(cmp$exhibit == "Exhibit 7" & cmp$panel == "C") | (cmp$exhibit == "Exhibit 8" & cmp$period == "Entire post-Lehman year"), ]
   cmp <- cmp[cmp$coef %in% c("b1 (tsy)", "b3 (spx)"), ]
   if (nrow(cmp)) {
-    e7 <- read.csv(file.path(out, "Ex7_SubPeriods.csv")); e8f <- file.path(out, "Ex8_PostLehman.csv")
-    e8 <- if (file.exists(e8f)) read.csv(e8f) else NULL
+    e7 <- R$Ex7_SubPeriods; e8 <- R$Ex8_PostLehman
     cmp$term <- sub("^b[0-9] \\((.*)\\)$", "\\1", cmp$coef)
     ci <- t(sapply(seq_len(nrow(cmp)), function(i) {
       if (cmp$exhibit[i] == "Exhibit 7") { o <- e7[e7$sample == "Replication sub-periods" & e7$panel == "C" & e7$period == cmp$period[i] & e7$term == cmp$term[i], ] }
@@ -653,8 +673,8 @@ make_charts <- function(out, meta, note) {
   }
 
   # 3. benchmark placement per +100bp
-  im <- read.csv(file.path(out, "Implications_per100bp.csv"))
-  keep <- c(sapply(meta$rep_periods, `[[`, 1), sapply(meta$ext_fed_periods, `[[`, 1)); keep <- unlist(keep)
+  im <- R$Implications_per100bp
+  keep <- c(sapply(meta$rep_periods, `[[`, 1), sapply(meta$fed_periods, `[[`, 1)); keep <- unlist(keep)
   im <- im[im$period %in% keep, ]
   im$plabel <- factor(sub(" \\(partial\\)", "*", im$period), levels = rev(sub(" \\(partial\\)", "*", keep)))
   ser <- list(c("Treasury10Y", "10Y Treasury"), c("SP500_total", "S&P 500"), c("REIT_total", "US REITs"))
@@ -665,28 +685,29 @@ make_charts <- function(out, meta, note) {
   n_rep <- length(meta$rep_periods)
   g <- ggplot(bars, aes(v, plabel, fill = series)) +
     geom_col(position = position_dodge(width = 0.8), width = 0.72) +
-    geom_errorbarh(aes(xmin = lo, xmax = hi), position = position_dodge(width = 0.8), height = 0, colour = INK2, linewidth = 0.4, na.rm = TRUE) +
+    geom_errorbar(aes(xmin = lo, xmax = hi), orientation = "y", position = position_dodge(width = 0.8), width = 0, colour = INK2, linewidth = 0.4, na.rm = TRUE) +
     geom_vline(xintercept = 0, colour = INK2, linewidth = 0.4) +
     { if (nrow(im) > n_rep) geom_hline(yintercept = nrow(im) - n_rep + 0.5, colour = GRID, linewidth = 0.8) } +
     scale_fill_manual(values = c("10Y Treasury" = AQUA, "S&P 500" = ORANGE, "US REITs" = BLUE),
                       breaks = c("10Y Treasury", "S&P 500", "US REITs")) +
     labs(title = "Benchmark placement: do REITs react to rates like the bond or like stocks?", y = NULL,
          x = "Average same-day return per +100bp rise in the 10Y yield (%), with 95% CI (Newey-West)",
-         caption = paste("* partial sub-period. Rows below the line: extension, Fed-policy regimes.", note)) + theme_gs()
+         caption = paste("* partial sub-period. Rows below the line: Fed-policy episodes, Jun 2005 to Oct 2026 (episodes under 60 days not shown).", note)) + theme_gs()
   f <- file.path(out, "chart3_benchmark_per100bp.png"); ggsave(f, g, width = 10, height = 0.55 * nrow(im) + 1.8, dpi = 180); files <- c(files, f)
   files
 }
 
 # ------------------------------- 6. EXCEL WORKBOOK -----------------------------------
-README <- data.frame(Item = c("What this is", "Units", "Bond returns", "Standard errors", "Sub-periods", "Interpretation caution"),
+README <- data.frame(Item = c("What this is", "Units", "Bond returns", "Standard errors", "Sub-periods", "Interpretation caution", "Fed-policy sheets"),
   Detail = c("Replication and extension of Giliberto & Shulman (rev. 8.17.2016), 'On the Interest Rate Sensitivity of REITs'.",
     "Returns are decimals (0.01 = 1%); yield changes in percentage points. A coefficient of -0.081 on dYield = -8.1% per +100bp. Intercepts in sub-period tables are x1000, as in the paper.",
     "Paper's method: par bond priced at 100 with coupon = previous day's yield, re-priced at today's yield, 10 years to maturity, semi-annual coupons. Same for Moody's Baa. Excess credit return = Baa return - Treasury return.",
     "Main tables use ordinary OLS t-stats, as the paper does (so they can be compared). The Robustness sheet repeats with HC3 and Newey-West (5 lags); robust p-values use the normal distribution.",
-    "Replication uses the paper's Exhibit 3 dates. Extension uses (i) turning points of the MSCI REIT total-return index (paper's method, 20% swing rule) and (ii) Fed-policy regimes as a robustness check.",
-    "Coefficients are associations, not causal effects: yields, growth news and risk appetite move together. Sub-periods defined from the REIT index's own turning points are chosen after the fact."))
+    "Replication uses the paper's Exhibit 3 dates. Extension uses turning points of the MSCI REIT total-return index (the paper's idea, with a 20% swing rule); Ex4_DescStats covers both. The sensitivity analysis re-estimates the models in 13 Fed-policy episodes (12 tested; hiking, hold, easing, zero rates) from Jun 2005 to Oct 2026; see FED_REGIMES in the script.",
+    "Coefficients are associations, not causal effects: yields, growth news and risk appetite move together. Sub-periods defined from the REIT index's own turning points are chosen after the fact.",
+    "The FedRegime_Episodes, FedRegime_Stances and FedRegime_Wald sheets are added by fed_regimes_notebook.Rmd, which reads results/daily_dataset.csv. Run replicate_gs.R first, then the notebook."))
 
-make_workbook <- function(out, meta, charts, file = "REIT_RateSensitivity_Results.xlsx") {
+make_workbook <- function(out, meta, charts, R, file = "REIT_RateSensitivity_Results.xlsx") {
   wb <- createWorkbook(); hs <- createStyle(textDecoration = "bold", fontColour = "#FFFFFF", fgFill = "#2A78D6", wrapText = TRUE, valign = "top")
   addWorksheet(wb, "README")
   rd <- rbind(README, data.frame(Item = c("Run", rep("Note", length(meta$notes))), Detail = c(meta$label, unlist(meta$notes))))
@@ -695,8 +716,8 @@ make_workbook <- function(out, meta, charts, file = "REIT_RateSensitivity_Result
   order <- c("Data_Audit", "Replication_vs_Paper", "Ex4_DescStats", "Ex2_Correlations", "Ex5_YieldRegs", "Ex6_BondRegs",
              "Ex7_SubPeriods", "Wald_Tests", "Ex8_PostLehman", "Ext_TurningPoints", "Robustness", "Implications_per100bp", "Rolling_250d")
   for (k in order) {
-    f <- file.path(out, paste0(k, ".csv")); if (!file.exists(f)) next
-    df <- read.csv(f, check.names = FALSE); addWorksheet(wb, k)
+    df <- R[[k]]; if (is.null(df) || !nrow(df)) next
+    addWorksheet(wb, k)
     writeData(wb, k, df, headerStyle = hs); freezePane(wb, k, firstRow = TRUE)
     num <- which(sapply(df, is.double))
     if (length(num)) addStyle(wb, k, createStyle(numFmt = "0.0000"), rows = 2:(nrow(df) + 1), cols = num, gridExpand = TRUE)
@@ -711,6 +732,6 @@ make_workbook <- function(out, meta, charts, file = "REIT_RateSensitivity_Result
 # ------------------------------- RUN -------------------------------------------------
 res <- run_analysis(SETTINGS)
 note <- if (nzchar(SETTINGS$note)) SETTINGS$note else "Source: MSCI US REIT Index (total return), S&P 500, FRED DGS10 and DBAA."
-charts <- make_charts(SETTINGS$out, res$meta, note)
-wbfile <- make_workbook(SETTINGS$out, res$meta, charts)
+charts <- make_charts(SETTINGS$out, res$meta, note, res$R)
+wbfile <- make_workbook(SETTINGS$out, res$meta, charts, res$R)
 cat("Wrote", paste(basename(charts), collapse = ", "), "and", basename(wbfile), "\n")
