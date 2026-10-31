@@ -20,7 +20,7 @@ US REIT Sensitivity/
 | `DGS10` | 10Y Treasury constant-maturity yield, % | FRED |
 | `DBAA` | Moody's Baa corporate yield, % | FRED |
 
-Sample: 1 Jun 2005 to 15 Oct 2026. No values are filled or imputed.
+Sample: 1 Jun 2005 to 15 Oct 2026.
 
 ## Outputs (`results/`)
 - `REIT_RateSensitivity_Results.xlsx`: every results table as a sheet, plus a README sheet and the charts.
